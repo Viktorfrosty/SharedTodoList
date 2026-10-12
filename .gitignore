@@ -1,0 +1,22 @@
+# .NET build output
+[Bb]in/
+[Oo]bj/
+
+# IDE-local files
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+
+# Local environment and Firebase configuration
+.env
+.env.*
+!.env.example
+wwwroot/firebase-config.local.js
+
+# Firebase CLI state and debug logs
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log

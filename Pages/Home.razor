@@ -1,0 +1,827 @@
+@page "/"
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<PageTitle>Home Together — shared lists</PageTitle>
+
+@if (!initialized)
+{
+    <main class="boot-screen" aria-live="polite">
+        <span class="brand-mark" aria-hidden="true">H</span>
+        <p>Getting your home in order…</p>
+    </main>
+}
+else if (currentUser is null)
+{
+    <main class="welcome-shell">
+        <section class="welcome-card" aria-labelledby="welcome-title">
+            <span class="brand-mark" aria-hidden="true">H</span>
+            <p class="eyebrow">A little more in sync</p>
+            <h1 id="welcome-title">Make home happen,<br />together.</h1>
+            <p class="welcome-copy">Keep the shopping list, little jobs, and who's-on-it all in one calm place.</p>
+
+            @if (firebaseConfigured)
+            {
+                <button class="button button-dark button-wide" @onclick="SignInWithGoogle">
+                    <span class="google-mark" aria-hidden="true">G</span>
+                    Continue with Google
+                </button>
+                <div class="auth-divider"><span>OR CONTINUE WITH EMAIL</span></div>
+                @if (authMode == AuthMode.SignIn)
+                {
+                    <EditForm Model="loginForm" OnValidSubmit="SignInWithEmail" class="demo-form auth-form">
+                        <DataAnnotationsValidator />
+                        <ValidationSummary class="auth-validation-summary" />
+                        <label for="login-email">Email</label>
+                        <InputText id="login-email" type="email" @bind-Value="loginForm.Email" autocomplete="email" maxlength="254" required />
+                        <label for="login-password">Password</label>
+                        <InputText id="login-password" type="password" @bind-Value="loginForm.Password" autocomplete="current-password" maxlength="128" required />
+                        <button class="button button-dark button-wide" type="submit">Sign in with email</button>
+                    </EditForm>
+                    <p class="auth-switch">New here? <button class="text-button" @onclick="() => SetAuthMode(AuthMode.CreateAccount)">Create an account</button></p>
+                }
+                else
+                {
+                    <EditForm Model="registrationForm" OnValidSubmit="CreateEmailAccount" class="demo-form auth-form">
+                        <DataAnnotationsValidator />
+                        <ValidationSummary class="auth-validation-summary" />
+                        <label for="register-name">Your name</label>
+                        <InputText id="register-name" @bind-Value="registrationForm.DisplayName" autocomplete="name" maxlength="60" required />
+                        <label for="register-email">Email</label>
+                        <InputText id="register-email" type="email" @bind-Value="registrationForm.Email" autocomplete="email" maxlength="254" required />
+                        <label for="register-password">Password <span class="field-hint">(at least 8 characters)</span></label>
+                        <InputText id="register-password" type="password" @bind-Value="registrationForm.Password" autocomplete="new-password" minlength="8" maxlength="128" required />
+                        <label for="register-confirm-password">Confirm password</label>
+                        <InputText id="register-confirm-password" type="password" @bind-Value="registrationForm.ConfirmPassword" autocomplete="new-password" minlength="8" maxlength="128" required />
+                        <button class="button button-dark button-wide" type="submit">Create account</button>
+                    </EditForm>
+                    <p class="auth-switch">Already have an account? <button class="text-button" @onclick="() => SetAuthMode(AuthMode.SignIn)">Sign in</button></p>
+                }
+                @if (!string.IsNullOrWhiteSpace(authMessage))
+                {
+                    <p class="success-message" role="status">@authMessage</p>
+                }
+                <p class="fine-print">Your lists are private to you and the people you invite.</p>
+            }
+            else
+            {
+                <div class="setup-note" role="status">
+                    <strong>Firebase isn't connected yet.</strong>
+                    <span>Use the local demo now, or follow the setup guide to enable Google sign-in and shared cloud lists.</span>
+                </div>
+                <EditForm Model="demoForm" OnValidSubmit="EnterDemo" class="demo-form">
+                    <DataAnnotationsValidator />
+                    <label for="demo-name">Your name</label>
+                    <InputText id="demo-name" @bind-Value="demoForm.DisplayName" autocomplete="name" maxlength="60" required />
+                    <label for="demo-email">Email for this demo</label>
+                    <InputText id="demo-email" type="email" @bind-Value="demoForm.Email" autocomplete="email" maxlength="254" required />
+                    <button class="button button-dark button-wide" type="submit">Explore the demo</button>
+                </EditForm>
+                <p class="fine-print">Demo data stays in this browser. It is not an account and is not shared.</p>
+            }
+            @if (!string.IsNullOrWhiteSpace(errorMessage))
+            {
+                <p class="alert-message" role="alert">@errorMessage</p>
+            }
+        </section>
+        <aside class="welcome-aside" aria-label="App preview">
+            <div class="preview-card">
+                <div class="preview-top"><span class="status-dot"></span> SUNDAY RESET <span>·</span> HOME</div>
+                <h2>Little things,<br />all handled.</h2>
+                <div class="preview-task"><span class="preview-check checked">✓</span><span class="done">Pick up oat milk</span><small>YOU</small></div>
+                <div class="preview-task"><span class="preview-check"></span><span>Fresh flowers</span><small>JAMIE</small></div>
+                <div class="preview-task"><span class="preview-check"></span><span>Fix the hallway hook</span><small>YOU</small></div>
+                <div class="preview-footer"><span class="avatar avatar-peach">M</span><span class="avatar avatar-green">J</span><span>Good teamwork feels easy.</span></div>
+            </div>
+        </aside>
+    </main>
+}
+else
+{
+    <div class="app-shell">
+        <aside class="sidebar">
+            <a class="wordmark" href="" aria-label="Home Together dashboard"><span class="brand-mark small">H</span><span>home<span class="wordmark-light">together</span></span></a>
+            <div class="sidebar-section-title">YOUR SPACE <button class="icon-button add-list-button" title="Create a list" aria-label="Create a list" @onclick="ShowCreateList">+</button></div>
+            <nav class="list-navigation" aria-label="Your lists">
+                @foreach (var list in userLists)
+                {
+                    <button class="list-nav-item @(selectedList?.Id == list.Id ? "selected" : "")" aria-current="@(selectedList?.Id == list.Id ? "page" : null)" @onclick="() => SelectList(list)">
+                        <span class="list-emoji" aria-hidden="true">@ListIcon(list)</span>
+                        <span class="list-nav-text"><span>@list.Title</span><small>@list.Members.Count @(list.Members.Count == 1 ? "person" : "people")</small></span>
+                        @if (selectedList?.Id == list.Id)
+                        {
+                            <span class="nav-chevron" aria-hidden="true">›</span>
+                        }
+                    </button>
+                }
+                @if (userLists.Count == 0)
+                {
+                    <p class="empty-sidebar">Your lists will show up here.</p>
+                }
+            </nav>
+            <div class="sidebar-spacer"></div>
+            <div class="sidebar-hint"><span aria-hidden="true">✳</span><p>Good things get done<br />when they're shared.</p></div>
+            <button class="profile-button" @onclick="OpenProfile" aria-label="Open profile settings">
+                <span class="avatar avatar-user">@Initials(currentUser.DisplayName)</span>
+                <span class="profile-summary"><strong>@currentUser.DisplayName</strong><small>@(isDemo ? "Local demo" : currentUser.Email)</small></span>
+                <span class="profile-more" aria-hidden="true">···</span>
+            </button>
+        </aside>
+
+        <main class="main-panel">
+            <header class="topbar">
+                <div class="breadcrumb"><span>YOUR HOME</span><span class="breadcrumb-slash">/</span><strong>@(selectedList?.Title ?? "Overview")</strong></div>
+                <div class="topbar-right">
+                    @if (isDemo)
+                    {
+                        <span class="demo-pill"><span></span> LOCAL DEMO</span>
+                    }
+                    <button class="profile-top" @onclick="OpenProfile"><span class="avatar avatar-user">@Initials(currentUser.DisplayName)</span><span>@currentUser.DisplayName</span><span class="caret">⌄</span></button>
+                </div>
+            </header>
+
+            <div class="content-wrap">
+                @if (!string.IsNullOrWhiteSpace(errorMessage))
+                {
+                    <div class="alert-message page-alert" role="alert"><span>@errorMessage</span><button class="icon-button" aria-label="Dismiss error" @onclick="() => errorMessage = null">×</button></div>
+                }
+                @if (isDemo)
+                {
+                    <div class="demo-banner"><span aria-hidden="true">ⓘ</span><span><strong>You're in a local demo.</strong> Changes are saved in this browser only. Connect Firebase to share with others.</span></div>
+                }
+
+                @if (selectedList is null)
+                {
+                    <section class="empty-state">
+                        <div class="empty-illustration" aria-hidden="true">✳</div>
+                        <p class="eyebrow">A fresh start</p>
+                        <h1>Make room for the good stuff.</h1>
+                        <p>Create your first list and start keeping the little things in sync.</p>
+                        <button class="button button-dark" @onclick="ShowCreateList">Create your first list <span aria-hidden="true">↗</span></button>
+                    </section>
+                }
+                else
+                {
+                    <section class="list-heading">
+                        <div class="heading-copy">
+                            <div class="eyebrow">@ListIcon(selectedList) &nbsp; YOUR SHARED LIST</div>
+                            @if (editingListTitle)
+                            {
+                                <EditForm Model="listTitleForm" OnValidSubmit="SaveListTitle" class="inline-edit-title">
+                                    <DataAnnotationsValidator />
+                                    <InputText @bind-Value="listTitleForm.Title" aria-label="List title" maxlength="60" required />
+                                    <button type="submit" class="text-button">Save</button>
+                                    <button type="button" class="text-button muted" @onclick="() => editingListTitle = false">Cancel</button>
+                                </EditForm>
+                            }
+                            else
+                            {
+                                <div class="title-row"><h1>@selectedList.Title</h1>                                @if (canManageList)
+                                {
+                                    <button class="icon-button edit-title-button" title="Rename list" aria-label="Rename list" @onclick="BeginEditListTitle">✎</button>
+                                }</div>
+                            }
+                            <p class="list-subtitle">@selectedList.Members.Count @(selectedList.Members.Count == 1 ? "person" : "people") keeping this on track <span>·</span> @remainingCount left to do</p>
+                        </div>
+                        <div class="heading-actions">
+                            <button class="button button-outline" @onclick="OpenMembers"><span aria-hidden="true">♧</span> Share <span class="member-count">@selectedList.Members.Count</span></button>
+                            @if (canManageList)
+                            {
+                                <button class="icon-button more-button" aria-label="Delete list" title="Delete list" @onclick="DeleteSelectedList">···</button>
+                            }
+                        </div>
+                    </section>
+
+                    <section class="list-progress" aria-label="List progress">
+                        <div class="progress-label"><span>YOUR PROGRESS</span><strong>@completedCount / @currentTasks.Count done</strong></div>
+                        <div class="progress-track" role="progressbar" aria-label="Tasks completed" aria-valuemin="0" aria-valuemax="@Math.Max(1, currentTasks.Count)" aria-valuenow="@completedCount"><span style="width:@ProgressWidth"></span></div>
+                    </section>
+
+                    <EditForm Model="taskForm" OnValidSubmit="AddTask" class="add-task-form">
+                        <DataAnnotationsValidator />
+                        <span class="add-icon" aria-hidden="true">+</span>
+                        <InputText @bind-Value="taskForm.Title" placeholder="Add something to the list…" aria-label="New task" maxlength="120" required />
+                        <InputSelect @bind-Value="taskForm.AssignedToEmail" aria-label="Assign task">
+                            <option value="">Anyone</option>
+                            @foreach (var member in selectedList.Members)
+                            {
+                                <option value="@member">@MemberLabel(member)</option>
+                            }
+                        </InputSelect>
+                        <button class="button button-dark add-task-button" type="submit">Add item <span aria-hidden="true">↗</span></button>
+                    </EditForm>
+
+                    <div class="task-toolbar">
+                        <div class="filter-tabs" role="group" aria-label="Filter tasks">
+                            <button class="filter-tab @(taskFilter == "all" ? "active" : "")" @onclick='() => SetFilter("all")'>All <span>@currentTasks.Count</span></button>
+                            <button class="filter-tab @(taskFilter == "open" ? "active" : "")" @onclick='() => SetFilter("open")'>To do <span>@remainingCount</span></button>
+                            <button class="filter-tab @(taskFilter == "done" ? "active" : "")" @onclick='() => SetFilter("done")'>Done <span>@completedCount</span></button>
+                        </div>
+                        <span class="sort-label">SHARED WITH @selectedList.Members.Count</span>
+                    </div>
+
+                    <div class="task-list" aria-live="polite">
+                        @foreach (var task in FilteredTasks)
+                        {
+                            <article class="task-row @(task.IsCompleted ? "task-complete" : "")">
+                                <button class="task-toggle @(task.IsCompleted ? "checked" : "")" role="checkbox" aria-checked="@task.IsCompleted.ToString().ToLowerInvariant()" aria-label="@(task.IsCompleted ? "Mark " + task.Title + " as not done" : "Mark " + task.Title + " as done")" @onclick="() => ToggleTask(task)">
+                                    @if (task.IsCompleted) { <span aria-hidden="true">✓</span> }
+                                </button>
+                                @if (editingTaskId == task.Id)
+                                {
+                                    <div class="task-edit">
+                                        <InputText @bind-Value="taskEditForm.Title" aria-label="Edit task title" maxlength="120" />
+                                        <InputSelect @bind-Value="taskEditForm.AssignedToEmail" aria-label="Change assignee">
+                                            <option value="">Anyone</option>
+                                            @foreach (var member in selectedList.Members)
+                                            {
+                                                <option value="@member">@MemberLabel(member)</option>
+                                            }
+                                        </InputSelect>
+                                        <button class="text-button" @onclick="() => SaveTask(task)">Save</button>
+                                        <button class="text-button muted" @onclick="CancelTaskEdit">Cancel</button>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <button class="task-title @(task.IsCompleted ? "done" : "")" @onclick="() => BeginEditTask(task)" aria-label="Edit @task.Title">@task.Title</button>
+                                    <span class="assignee-chip"><span class="assignee-dot" aria-hidden="true">@Initials(MemberLabel(task.AssignedToEmail))</span>@MemberLabel(task.AssignedToEmail)</span>
+                                    <button class="icon-button task-delete" title="Delete task" aria-label="Delete @task.Title" @onclick="() => DeleteTask(task)">×</button>
+                                }
+                            </article>
+                        }
+                        @if (!FilteredTasks.Any())
+                        {
+                            <div class="empty-tasks">
+                                <span aria-hidden="true">@(taskFilter == "done" ? "✓" : "✳")</span>
+                                <strong>@(taskFilter == "done" ? "Nothing checked off just yet." : taskFilter == "open" ? "You're all caught up." : "Your list is ready for a first item.")</strong>
+                                <small>@(taskFilter == "all" ? "Add a task above and make it a little easier for tomorrow." : "Try another filter to see the rest of your list.")</small>
+                            </div>
+                        }
+                    </div>
+
+                    <footer class="list-footer"><span>Made for sharing the load.</span>@if (canManageList) { <button class="text-button delete-list-link" @onclick="DeleteSelectedList">Delete this list</button> }</footer>
+                }
+            </div>
+        </main>
+    </div>
+
+    @if (showCreateList)
+    {
+        <div class="modal-backdrop" @onclick="CloseCreateList">
+            <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="create-list-title" @onclick:stopPropagation>
+                <button class="modal-close icon-button" aria-label="Close" @onclick="CloseCreateList">×</button>
+                <p class="eyebrow">START SOMEWHERE</p>
+                <h2 id="create-list-title">A new shared list</h2>
+                <p>Give this list a name. You can invite someone in a moment.</p>
+                <EditForm Model="newListForm" OnValidSubmit="CreateList">
+                    <DataAnnotationsValidator />
+                    <label for="new-list-title">List name</label>
+                    <InputText id="new-list-title" @bind-Value="newListForm.Title" placeholder="e.g. Weekly groceries" maxlength="60" required />
+                    <button class="button button-dark button-wide" type="submit">Create list <span aria-hidden="true">↗</span></button>
+                </EditForm>
+            </section>
+        </div>
+    }
+
+    @if (showMembers && selectedList is not null)
+    {
+        <div class="modal-backdrop" @onclick="() => showMembers = false">
+            <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="members-title" @onclick:stopPropagation>
+                <button class="modal-close icon-button" aria-label="Close" @onclick="() => showMembers = false">×</button>
+                <p class="eyebrow">BETTER TOGETHER</p>
+                <h2 id="members-title">People on this list</h2>
+                <p>Add someone's email to share the list. They'll need to sign in with this email.</p>
+                <div class="member-list">
+                    @foreach (var member in selectedList.Members)
+                    {
+                        <div class="member-row">
+                            <span class="avatar avatar-user">@Initials(MemberLabel(member))</span>
+                            <span class="member-details"><strong>@MemberLabel(member)</strong><small>@member @(member.Equals(currentUser.Email, StringComparison.OrdinalIgnoreCase) ? " · You" : "")</small></span>
+                            @if (canManageList && !member.Equals(currentUser.Email, StringComparison.OrdinalIgnoreCase))
+                            {
+                                <button class="remove-member-button" title="Remove @member from this list" aria-label="Remove @member from this list" @onclick="() => RemoveMember(member)">Remove</button>
+                            }
+                        </div>
+                    }
+                </div>
+                @if (canManageList)
+                {
+                    <EditForm Model="inviteForm" OnValidSubmit="InviteMember" class="invite-form">
+                        <DataAnnotationsValidator />
+                        <label for="invite-email">Invite by email</label>
+                        <div class="invite-input"><InputText id="invite-email" type="email" @bind-Value="inviteForm.Email" placeholder="name@example.com" maxlength="254" required /><button class="button button-dark" type="submit">Add</button></div>
+                    </EditForm>
+                }
+                else
+                {
+                    <p class="modal-hint">Only the list owner can invite more people.</p>
+                }
+                @if (isDemo)
+                {
+                    <p class="modal-hint">Demo members are saved only in this browser. Cloud sharing needs Firebase setup.</p>
+                }
+            </section>
+        </div>
+    }
+
+    @if (showProfile && currentUser is not null)
+    {
+        <div class="modal-backdrop" @onclick="() => showProfile = false">
+            <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="profile-title" @onclick:stopPropagation>
+                <button class="modal-close icon-button" aria-label="Close" @onclick="() => showProfile = false">×</button>
+                <p class="eyebrow">YOUR ACCOUNT</p>
+                <h2 id="profile-title">A little about you</h2>
+                <p>Your name is what the people you share with will see.</p>
+                <EditForm Model="profileForm" OnValidSubmit="SaveProfile">
+                    <DataAnnotationsValidator />
+                    <label for="profile-name">Display name</label>
+                    <InputText id="profile-name" @bind-Value="profileForm.DisplayName" maxlength="60" required />
+                    <label for="profile-email">Email</label>
+                    <InputText id="profile-email" @bind-Value="profileForm.Email" disabled />
+                    <button class="button button-dark button-wide" type="submit">Save changes</button>
+                </EditForm>
+                <button class="sign-out-button" @onclick="SignOut">@(isDemo ? "Exit local demo" : "Sign out")</button>
+            </section>
+        </div>
+    }
+}
+
+@code {
+    private IJSObjectReference? firebaseModule;
+    private DotNetObjectReference<Home>? componentReference;
+    private readonly DemoForm demoForm = new();
+    private readonly LoginForm loginForm = new();
+    private readonly RegistrationForm registrationForm = new();
+    private readonly ListForm newListForm = new();
+    private readonly ListForm listTitleForm = new();
+    private readonly TaskForm taskForm = new();
+    private readonly TaskForm taskEditForm = new();
+    private readonly InviteForm inviteForm = new();
+    private readonly UserProfile profileForm = new();
+    private List<TodoList> userLists = new();
+    private List<TodoTask> currentTasks = new();
+    private TodoList? selectedList;
+    private UserProfile? currentUser;
+    private bool initialized;
+    private bool firebaseConfigured;
+    private bool isDemo;
+    private AuthMode authMode = AuthMode.SignIn;
+    private bool showCreateList;
+    private bool showMembers;
+    private bool showProfile;
+    private bool editingListTitle;
+    private string? editingTaskId;
+    private string? pendingListTitle;
+    private HashSet<string>? listIdsBeforeCreate;
+    private string taskFilter = "all";
+    private string? errorMessage;
+    private string? authMessage;
+
+    private int completedCount => currentTasks.Count(task => task.IsCompleted);
+    private int remainingCount => currentTasks.Count - completedCount;
+    private bool canManageList => selectedList is not null && selectedList.OwnerUid == currentUser?.Uid;
+    private string ProgressWidth => currentTasks.Count == 0 ? "0%" : $"{completedCount * 100.0 / currentTasks.Count:0.#}%";
+    private IEnumerable<TodoTask> FilteredTasks => taskFilter switch
+    {
+        "open" => currentTasks.Where(task => !task.IsCompleted),
+        "done" => currentTasks.Where(task => task.IsCompleted),
+        _ => currentTasks
+    };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        try
+        {
+            firebaseModule = await JS.InvokeAsync<IJSObjectReference>("import", "./firebase.js");
+            componentReference = DotNetObjectReference.Create(this);
+            firebaseConfigured = await firebaseModule.InvokeAsync<bool>("initialize", componentReference);
+            initialized = true;
+            StateHasChanged();
+        }
+        catch (JSException exception)
+        {
+            errorMessage = $"The app couldn't start its storage module. {exception.Message}";
+            initialized = true;
+            StateHasChanged();
+        }
+    }
+
+    [JSInvokable]
+    public Task OnAuthChanged(string? userJson) => InvokeAsync(() =>
+    {
+        currentUser = string.IsNullOrWhiteSpace(userJson) ? null : JsonSerializer.Deserialize<UserProfile>(userJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        isDemo = currentUser?.Uid.StartsWith("demo-", StringComparison.Ordinal) == true;
+        userLists = new();
+        currentTasks = new();
+        selectedList = null;
+        if (currentUser is not null)
+        {
+            profileForm.Uid = currentUser.Uid;
+            profileForm.Email = currentUser.Email;
+            profileForm.DisplayName = currentUser.DisplayName;
+        }
+        StateHasChanged();
+    });
+
+    [JSInvokable]
+    public async Task OnListsChanged(string listsJson)
+    {
+        await InvokeAsync(async () =>
+        {
+            userLists = JsonSerializer.Deserialize<List<TodoList>>(listsJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new();
+            var newlyCreated = pendingListTitle is null
+                ? null
+                : userLists.FirstOrDefault(list =>
+                    list.Title == pendingListTitle
+                    && listIdsBeforeCreate?.Contains(list.Id) == false);
+            if (newlyCreated is not null)
+            {
+                selectedList = newlyCreated;
+                pendingListTitle = null;
+                listIdsBeforeCreate = null;
+                currentTasks = new();
+                await WatchSelectedTasks();
+            }
+            else if (selectedList is not null)
+            {
+                var updated = userLists.FirstOrDefault(list => list.Id == selectedList.Id);
+                if (updated is null)
+                {
+                    selectedList = null;
+                    currentTasks = new();
+                    await WatchSelectedTasks();
+                }
+                else
+                {
+                    selectedList = updated;
+                }
+            }
+            else if (userLists.Count > 0)
+            {
+                selectedList = userLists[0];
+                await WatchSelectedTasks();
+            }
+            StateHasChanged();
+        });
+    }
+
+    [JSInvokable]
+    public Task OnTasksChanged(string tasksJson) => InvokeAsync(() =>
+    {
+        currentTasks = JsonSerializer.Deserialize<List<TodoTask>>(tasksJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new();
+        StateHasChanged();
+    });
+
+    [JSInvokable]
+    public Task OnStorageError(string message) => InvokeAsync(() =>
+    {
+        errorMessage = FriendlyError(message);
+        StateHasChanged();
+    });
+
+    private async Task EnterDemo()
+    {
+        await RunAction(async () =>
+        {
+            await firebaseModule!.InvokeVoidAsync("enterDemo", demoForm.DisplayName.Trim(), demoForm.Email.Trim());
+        });
+    }
+
+    private async Task SignInWithGoogle()
+    {
+        await RunAction(async () => await firebaseModule!.InvokeVoidAsync("signInWithGoogle"));
+    }
+
+    private async Task SignInWithEmail()
+    {
+        authMessage = null;
+        await RunAction(async () =>
+        {
+            await firebaseModule!.InvokeVoidAsync("signInWithEmail", loginForm.Email.Trim(), loginForm.Password);
+        });
+    }
+
+    private async Task CreateEmailAccount()
+    {
+        authMessage = null;
+        await RunAction(async () =>
+        {
+            authMessage = await firebaseModule!.InvokeAsync<string>(
+                "createEmailAccount",
+                registrationForm.DisplayName.Trim(),
+                registrationForm.Email.Trim(),
+                registrationForm.Password);
+            registrationForm.Password = string.Empty;
+            registrationForm.ConfirmPassword = string.Empty;
+            registrationForm.Email = string.Empty;
+            registrationForm.DisplayName = string.Empty;
+            authMode = AuthMode.SignIn;
+        });
+    }
+
+    private void SetAuthMode(AuthMode mode)
+    {
+        authMode = mode;
+        loginForm.Password = string.Empty;
+        registrationForm.Password = string.Empty;
+        registrationForm.ConfirmPassword = string.Empty;
+        errorMessage = null;
+        authMessage = null;
+    }
+
+    private async Task SignOut()
+    {
+        await RunAction(async () =>
+        {
+            await firebaseModule!.InvokeVoidAsync("signOut");
+            showProfile = false;
+        });
+    }
+
+    private async Task SelectList(TodoList list)
+    {
+        if (selectedList?.Id == list.Id)
+        {
+            return;
+        }
+        selectedList = list;
+        currentTasks = new();
+        taskFilter = "all";
+        await WatchSelectedTasks();
+    }
+
+    private async Task WatchSelectedTasks()
+    {
+        var module = firebaseModule;
+        if (module is null) return;
+        await module.InvokeVoidAsync("watchTasks", selectedList?.Id, componentReference);
+    }
+
+    private void ShowCreateList()
+    {
+        newListForm.Title = string.Empty;
+        showCreateList = true;
+    }
+
+    private void CloseCreateList() => showCreateList = false;
+
+    private async Task CreateList()
+    {
+        pendingListTitle = newListForm.Title.Trim();
+        listIdsBeforeCreate = userLists.Select(list => list.Id).ToHashSet(StringComparer.Ordinal);
+        await RunAction(async () =>
+        {
+            await firebaseModule!.InvokeVoidAsync("createList", newListForm.Title.Trim());
+            showCreateList = false;
+        });
+        if (errorMessage is not null)
+        {
+            pendingListTitle = null;
+            listIdsBeforeCreate = null;
+        }
+    }
+
+    private void BeginEditListTitle()
+    {
+        if (selectedList is null) return;
+        listTitleForm.Title = selectedList.Title;
+        editingListTitle = true;
+    }
+
+    private async Task SaveListTitle()
+    {
+        if (selectedList is null) return;
+        await RunAction(async () =>
+        {
+            await firebaseModule!.InvokeVoidAsync("renameList", selectedList.Id, listTitleForm.Title.Trim());
+            editingListTitle = false;
+        });
+    }
+
+    private async Task DeleteSelectedList()
+    {
+        if (selectedList is null) return;
+        await RunAction(async () =>
+        {
+            if (await firebaseModule!.InvokeAsync<bool>("confirmAction", $"Delete “{selectedList.Title}” and all its tasks? This can't be undone."))
+            {
+                await firebaseModule!.InvokeVoidAsync("deleteList", selectedList.Id);
+                currentTasks = new();
+            }
+        });
+    }
+
+    private async Task AddTask()
+    {
+        if (selectedList is null) return;
+        await RunAction(async () =>
+        {
+            await firebaseModule!.InvokeVoidAsync("createTask", selectedList.Id, taskForm.Title.Trim(), taskForm.AssignedToEmail);
+            taskForm.Title = string.Empty;
+            taskForm.AssignedToEmail = string.Empty;
+        });
+    }
+
+    private async Task ToggleTask(TodoTask task)
+    {
+        await RunAction(async () => await firebaseModule!.InvokeVoidAsync("toggleTask", selectedList!.Id, task.Id, !task.IsCompleted));
+    }
+
+    private void BeginEditTask(TodoTask task)
+    {
+        editingTaskId = task.Id;
+        taskEditForm.Title = task.Title;
+        taskEditForm.AssignedToEmail = task.AssignedToEmail;
+    }
+
+    private void CancelTaskEdit() => editingTaskId = null;
+
+    private async Task SaveTask(TodoTask task)
+    {
+        await RunAction(async () =>
+        {
+            await firebaseModule!.InvokeVoidAsync("updateTask", selectedList!.Id, task.Id, taskEditForm.Title.Trim(), taskEditForm.AssignedToEmail);
+            editingTaskId = null;
+        });
+    }
+
+    private async Task DeleteTask(TodoTask task)
+    {
+        await RunAction(async () =>
+        {
+            await firebaseModule!.InvokeVoidAsync("deleteTask", selectedList!.Id, task.Id);
+        });
+    }
+
+    private void OpenMembers()
+    {
+        inviteForm.Email = string.Empty;
+        showMembers = true;
+    }
+
+    private async Task InviteMember()
+    {
+        if (selectedList is null) return;
+        await RunAction(async () =>
+        {
+            await firebaseModule!.InvokeVoidAsync("addMember", selectedList.Id, inviteForm.Email.Trim());
+            inviteForm.Email = string.Empty;
+        });
+    }
+
+    private async Task RemoveMember(string email)
+    {
+        if (selectedList is null || !canManageList) return;
+        await RunAction(async () =>
+        {
+            var confirmed = await firebaseModule!.InvokeAsync<bool>(
+                "confirmAction",
+                $"Remove {email} from “{selectedList.Title}”? They will no longer be able to view or update this list.");
+            if (confirmed)
+            {
+                await firebaseModule!.InvokeVoidAsync("removeMember", selectedList.Id, email);
+            }
+        });
+    }
+
+    private void OpenProfile()
+    {
+        if (currentUser is null) return;
+        profileForm.DisplayName = currentUser.DisplayName;
+        profileForm.Email = currentUser.Email;
+        showProfile = true;
+    }
+
+    private async Task SaveProfile()
+    {
+        await RunAction(async () =>
+        {
+            await firebaseModule!.InvokeVoidAsync("updateProfile", profileForm.DisplayName.Trim());
+            showProfile = false;
+        });
+    }
+
+    private async Task RunAction(Func<Task> action)
+    {
+        errorMessage = null;
+        try
+        {
+            await action();
+        }
+        catch (JSException exception)
+        {
+            errorMessage = FriendlyError(exception.Message);
+        }
+        catch (InvalidOperationException exception)
+        {
+            errorMessage = $"That change couldn't be completed. {exception.Message}";
+        }
+    }
+
+    private static string FriendlyError(string message)
+    {
+        if (message.Contains("email isn't verified", StringComparison.OrdinalIgnoreCase)) return message;
+        if (message.Contains("auth/invalid-credential", StringComparison.OrdinalIgnoreCase) || message.Contains("auth/wrong-password", StringComparison.OrdinalIgnoreCase) || message.Contains("auth/user-not-found", StringComparison.OrdinalIgnoreCase)) return "That email and password don't match an account. Check them and try again.";
+        if (message.Contains("auth/email-already-in-use", StringComparison.OrdinalIgnoreCase)) return "An account already uses that email. Try signing in instead.";
+        if (message.Contains("auth/weak-password", StringComparison.OrdinalIgnoreCase)) return "Choose a stronger password with at least 8 characters.";
+        if (message.Contains("auth/invalid-email", StringComparison.OrdinalIgnoreCase)) return "Enter a valid email address.";
+        if (message.Contains("auth/too-many-requests", StringComparison.OrdinalIgnoreCase)) return "There have been too many attempts. Wait a little while and try again.";
+        if (message.Contains("auth/operation-not-allowed", StringComparison.OrdinalIgnoreCase)) return "Email/password sign-in is not enabled for this Firebase project. Enable it in Firebase Authentication settings.";
+        if (message.Contains("permission", StringComparison.OrdinalIgnoreCase)) return "You don't have permission to make that change. Check that you're signed in with an email on this list.";
+        if (message.Contains("popup-closed", StringComparison.OrdinalIgnoreCase)) return "Sign-in was cancelled before it finished.";
+        if (message.Contains("network", StringComparison.OrdinalIgnoreCase)) return "A network error interrupted that action. Check your connection and try again.";
+        return $"That change couldn't be completed. {message}";
+    }
+
+    private void SetFilter(string filter) => taskFilter = filter;
+    private static string ListIcon(TodoList list) => list.Title.Contains("shop", StringComparison.OrdinalIgnoreCase) || list.Title.Contains("grocer", StringComparison.OrdinalIgnoreCase) ? "🛒" : list.Title.Contains("home", StringComparison.OrdinalIgnoreCase) ? "⌂" : "✳";
+
+    private static string MemberLabel(string email)
+    {
+        if (string.IsNullOrWhiteSpace(email)) return "Anyone";
+        var name = email.Split('@')[0].Replace('.', ' ').Replace('_', ' ');
+        return string.Join(' ', name.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
+    }
+
+    private static string Initials(string value)
+    {
+        var parts = value.Split([' ', '@', '.'], StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0) return "?";
+        return parts.Length > 1
+            ? string.Concat(char.ToUpperInvariant(parts[0][0]), char.ToUpperInvariant(parts[1][0]))
+            : value.Length > 1 ? value[..2].ToUpperInvariant() : value.ToUpperInvariant();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        componentReference?.Dispose();
+        if (firebaseModule is not null)
+        {
+            try
+            {
+                await firebaseModule.InvokeVoidAsync("dispose");
+                await firebaseModule.DisposeAsync();
+            }
+            catch (JSDisconnectedException) { }
+        }
+    }
+
+    private sealed class DemoForm
+    {
+        [Required, StringLength(60, MinimumLength = 1)]
+        public string DisplayName { get; set; } = string.Empty;
+        [Required, EmailAddress, StringLength(254)]
+        public string Email { get; set; } = string.Empty;
+    }
+
+    private enum AuthMode
+    {
+        SignIn,
+        CreateAccount
+    }
+
+    private sealed class LoginForm
+    {
+        [Required, EmailAddress, StringLength(254)]
+        public string Email { get; set; } = string.Empty;
+        [Required, StringLength(128, MinimumLength = 8)]
+        public string Password { get; set; } = string.Empty;
+    }
+
+    private sealed class RegistrationForm
+    {
+        [Required, StringLength(60, MinimumLength = 1)]
+        public string DisplayName { get; set; } = string.Empty;
+        [Required, EmailAddress, StringLength(254)]
+        public string Email { get; set; } = string.Empty;
+        [Required, StringLength(128, MinimumLength = 8)]
+        public string Password { get; set; } = string.Empty;
+        [Required, Compare(nameof(Password), ErrorMessage = "Passwords do not match.")]
+        public string ConfirmPassword { get; set; } = string.Empty;
+    }
+
+    private sealed class ListForm
+    {
+        [Required, StringLength(60, MinimumLength = 1)]
+        public string Title { get; set; } = string.Empty;
+    }
+
+    private sealed class TaskForm
+    {
+        [Required, StringLength(120, MinimumLength = 1)]
+        public string Title { get; set; } = string.Empty;
+        public string AssignedToEmail { get; set; } = string.Empty;
+    }
+
+    private sealed class InviteForm
+    {
+        [Required, EmailAddress, StringLength(254)]
+        public string Email { get; set; } = string.Empty;
+    }
+}
