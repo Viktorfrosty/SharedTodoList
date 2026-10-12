@@ -8,6 +8,7 @@
 .vscode/
 *.user
 *.suo
+README-old.md
 
 # Local environment and Firebase configuration
 .env
