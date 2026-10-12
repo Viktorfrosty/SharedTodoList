@@ -32,9 +32,9 @@ service cloud.firestore {
     }
 
     match /lists/{listId} {
-      allow read: if isListMember(listId)
-        || (isListOwner(listId)
-          && resource.data.get('deletionInProgress', false) == true);
+      allow read: if signedIn()
+        && resource.data.members is list
+        && resource.data.members.hasAny([request.auth.token.email.lower()]);
 
       allow create: if signedIn()
         && request.resource.data.ownerUid == request.auth.uid
