@@ -21,3 +21,6 @@ wwwroot/firebase-config.local.js
 firebase-debug.log
 firestore-debug.log
 ui-debug.log
+
+# Node.js dependencies
+node_modules/

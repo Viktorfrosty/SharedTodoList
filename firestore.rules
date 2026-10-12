@@ -33,8 +33,7 @@ service cloud.firestore {
 
     match /lists/{listId} {
       allow read: if signedIn()
-        && resource.data.members is list
-        && resource.data.members.hasAny([request.auth.token.email.lower()]);
+        && request.auth.token.email.lower() in resource.data.members;
 
       allow create: if signedIn()
         && request.resource.data.ownerUid == request.auth.uid
