@@ -13,6 +13,7 @@ import {
     doc,
     getDoc,
     getDocs,
+    onSnapshot,
     query,
     setDoc,
     updateDoc,
@@ -62,6 +63,20 @@ test("member-filtered list query reads only lists containing the signed-in email
             deletionInProgress: false,
             deleted: false
         });
+        await setDoc(doc(database, "lists", "member-list", "tasks", "visible-task"), {
+            title: "Visible to the list member",
+            listId: "member-list",
+            isCompleted: false,
+            assignedToEmail: owner.email,
+            createdByUid: owner.uid
+        });
+        await setDoc(doc(database, "lists", "private-list", "tasks", "private-task"), {
+            title: "Private task",
+            listId: "private-list",
+            isCompleted: false,
+            assignedToEmail: "",
+            createdByUid: "another-owner"
+        });
     });
 
     const database = testEnvironment
@@ -86,6 +101,56 @@ test("member-filtered list query reads only lists containing the signed-in email
     );
 
     await assertFails(getDocs(collection(database, "lists")));
+
+    // This is the exact unfiltered subcollection read used by watchTasks/onSnapshot.
+    const taskCollection = collection(database, "lists", "member-list", "tasks");
+    const visibleTasks = await assertSucceeds(getDocs(taskCollection));
+    assert.deepEqual(visibleTasks.docs.map(item => item.id), ["visible-task"]);
+
+    let unsubscribe;
+    try {
+        const liveTasks = await assertSucceeds(new Promise((resolve, reject) => {
+            unsubscribe = onSnapshot(taskCollection, resolve, reject);
+        }));
+        assert.deepEqual(liveTasks.docs.map(item => item.id), ["visible-task"]);
+    } finally {
+        unsubscribe?.();
+    }
+
+    await assertFails(getDocs(collection(database, "lists", "private-list", "tasks")));
+});
+
+test("a recreated account can read a stale deleting list but cannot read its tasks", async () => {
+    await testEnvironment.withSecurityRulesDisabled(async context => {
+        const database = context.firestore();
+        await setDoc(doc(database, "lists", "stale-deleting-list"), {
+            title: "Old account list",
+            ownerUid: "deleted-account-uid",
+            members: [owner.email],
+            memberUids: { [owner.email]: "deleted-account-uid" },
+            deletionInProgress: true,
+            deleted: false
+        });
+        await setDoc(doc(database, "lists", "stale-deleting-list", "tasks", "old-task"), {
+            title: "Task from before account deletion",
+            listId: "stale-deleting-list",
+            isCompleted: false,
+            assignedToEmail: "",
+            createdByUid: "deleted-account-uid"
+        });
+    });
+
+    // The same verified email can match the stale list, but recreating the account
+    // produces a different UID and does not restore the old owner's task access.
+    const recreatedAccount = testEnvironment
+        .authenticatedContext("recreated-account-uid", {
+            email: owner.email,
+            email_verified: true
+        })
+        .firestore();
+
+    await assertSucceeds(getDoc(doc(recreatedAccount, "lists", "stale-deleting-list")));
+    await assertFails(getDocs(collection(recreatedAccount, "lists", "stale-deleting-list", "tasks")));
 });
 
 test("verified user can create a list using the app's Firestore document shape", async () => {

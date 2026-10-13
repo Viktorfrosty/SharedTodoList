@@ -525,6 +525,7 @@ function watchLists() {
     );
     listsUnsubscribe = firebase.onSnapshot(listsQuery, snapshot => {
         const lists = snapshot.docs.map(item => ({ id: item.id, ...item.data() }))
+            .filter(list => list.deletionInProgress !== true)
             .filter(list => list.deleted !== true)
             .sort((a, b) => Number(a.createdAt ?? 0) - Number(b.createdAt ?? 0));
         publishLists(lists);
