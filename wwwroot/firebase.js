@@ -43,7 +43,7 @@ export async function initialize(component) {
         currentUser = user;
         await publishAuth(user ? profileFromUser(user) : null);
         watchLists();
-    }, reportError);
+    }, error => reportError(error, "authentication"));
     return true;
 }
 
@@ -168,7 +168,7 @@ export async function watchTasks(listId, component) {
         const tasks = snapshot.docs.map(item => ({ id: item.id, listId, ...item.data() }))
             .sort((a, b) => Number(a.createdAt ?? 0) - Number(b.createdAt ?? 0));
         publishTasks(tasks);
-    }, reportError);
+    }, error => reportError(error, "task updates"));
 }
 
 export async function createList(title) {
@@ -531,7 +531,7 @@ function watchLists() {
         for (const list of lists) {
             ensureMemberIdentity(list);
         }
-    }, reportError);
+    }, error => reportError(error, "list updates"));
 }
 
 async function ensureMemberIdentity(list) {
@@ -549,7 +549,7 @@ async function ensureMemberIdentity(list) {
             });
         });
     } catch (error) {
-        reportError(error);
+        reportError(error, "member identity sync");
     }
 }
 
@@ -621,8 +621,11 @@ async function publishTasks(tasks) {
     if (activeComponent) await activeComponent.invokeMethodAsync("OnTasksChanged", JSON.stringify(tasks));
 }
 
-function reportError(error) {
-    console.error("Home Together Firebase error:", error);
-    activeComponent?.invokeMethodAsync("OnStorageError", error?.message ?? "A Firebase request failed.")
+function reportError(error, source = "Firebase request") {
+    console.error(`Home Together ${source} error:`, error);
+    activeComponent?.invokeMethodAsync(
+        "OnStorageError",
+        `${source}: ${error?.message ?? "A Firebase request failed."}`
+    )
         .catch(callbackError => console.error("Couldn't report the Firebase error to the app:", callbackError));
 }

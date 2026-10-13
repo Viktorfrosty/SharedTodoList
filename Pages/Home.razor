@@ -902,7 +902,18 @@ else
         if (message.Contains("auth/too-many-requests", StringComparison.OrdinalIgnoreCase)) return "There have been too many attempts. Wait a little while and try again.";
         if (message.Contains("auth/requires-recent-login", StringComparison.OrdinalIgnoreCase)) return "Firebase needs a fresh sign-in to delete this account. Sign out, sign in again, and retry.";
         if (message.Contains("auth/operation-not-allowed", StringComparison.OrdinalIgnoreCase)) return "Email/password sign-in is not enabled for this Firebase project. Enable it in Firebase Authentication settings.";
-        if (message.Contains("permission", StringComparison.OrdinalIgnoreCase)) return "You don't have permission to make that change. Check that you're signed in with an email on this list.";
+        if (message.Contains("permission", StringComparison.OrdinalIgnoreCase))
+        {
+            if (message.StartsWith("task updates:", StringComparison.OrdinalIgnoreCase))
+                return "Task changes may still have saved, but live task updates lost access. Refresh the page to reconnect. Details: " + message;
+            if (message.StartsWith("list updates:", StringComparison.OrdinalIgnoreCase))
+                return "Live list updates lost access. Refresh the page to reconnect. Details: " + message;
+            if (message.StartsWith("member identity sync:", StringComparison.OrdinalIgnoreCase))
+                return "The list works, but member identity couldn't sync. Ownership transfer may not be available yet. Details: " + message;
+            if (message.StartsWith("authentication:", StringComparison.OrdinalIgnoreCase))
+                return "Your sign-in needs attention before Firebase can continue. Sign out and sign in again. Details: " + message;
+            return "You don't have permission to make that change. Check that you're signed in with an email on this list. Details: " + message;
+        }
         if (message.Contains("popup-closed", StringComparison.OrdinalIgnoreCase)) return "Sign-in was cancelled before it finished.";
         if (message.Contains("network", StringComparison.OrdinalIgnoreCase)) return "A network error interrupted that action. Check your connection and try again.";
         return $"That change couldn't be completed. {message}";
