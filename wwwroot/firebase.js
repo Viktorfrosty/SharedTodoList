@@ -358,7 +358,8 @@ export async function updateProfile(displayName) {
         email: currentUser.email,
         photoURL: currentUser.photoURL ?? ""
     }, { merge: true });
-    await publishAuth(profileFromUser(currentUser));
+    // Publish the saved value directly; a profile update isn't an auth-state change event.
+    await publishAuth({ ...profileFromUser(currentUser), displayName: name });
 }
 
 export function confirmAction(message) {

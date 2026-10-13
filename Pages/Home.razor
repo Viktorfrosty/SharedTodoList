@@ -417,11 +417,20 @@ else
     public Task OnAuthChanged(string? userJson) => InvokeAsync(() =>
     {
         // JavaScript listeners run outside Blazor's event pipeline; marshal updates onto its renderer.
-        currentUser = string.IsNullOrWhiteSpace(userJson) ? null : JsonSerializer.Deserialize<UserProfile>(userJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        var updatedUser = string.IsNullOrWhiteSpace(userJson)
+            ? null
+            : JsonSerializer.Deserialize<UserProfile>(userJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        var identityChanged = currentUser?.Uid != updatedUser?.Uid;
+        currentUser = updatedUser;
         isDemo = currentUser?.Uid.StartsWith("demo-", StringComparison.Ordinal) == true;
-        userLists = new();
-        currentTasks = new();
-        selectedList = null;
+        if (identityChanged)
+        {
+            // A profile refresh for the same account must not discard its selected list and tasks.
+            userLists = new();
+            currentTasks = new();
+            selectedList = null;
+            taskFilter = "all";
+        }
         if (currentUser is not null)
         {
             profileForm.Uid = currentUser.Uid;
