@@ -31,6 +31,7 @@ before(async () => {
     );
 
     testEnvironment = await initializeTestEnvironment({
+        // The demo project ID makes accidental requests to a real Firebase project fail closed.
         projectId,
         firestore: { rules }
     });
@@ -41,6 +42,7 @@ after(async () => {
 });
 
 test("member-filtered list query reads only lists containing the signed-in email", async () => {
+    // Seed both records outside the rules so the test can check member and non-member access.
     await testEnvironment.withSecurityRulesDisabled(async context => {
         const database = context.firestore();
         await setDoc(doc(database, "lists", "member-list"), {

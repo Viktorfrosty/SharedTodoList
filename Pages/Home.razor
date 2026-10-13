@@ -398,6 +398,7 @@ else
 
         try
         {
+            // Firebase uses browser APIs, so load its module after the first interactive render.
             firebaseModule = await JS.InvokeAsync<IJSObjectReference>("import", "./firebase.js");
             componentReference = DotNetObjectReference.Create(this);
             firebaseConfigured = await firebaseModule.InvokeAsync<bool>("initialize", componentReference);
@@ -415,6 +416,7 @@ else
     [JSInvokable]
     public Task OnAuthChanged(string? userJson) => InvokeAsync(() =>
     {
+        // JavaScript listeners run outside Blazor's event pipeline; marshal updates onto its renderer.
         currentUser = string.IsNullOrWhiteSpace(userJson) ? null : JsonSerializer.Deserialize<UserProfile>(userJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
         isDemo = currentUser?.Uid.StartsWith("demo-", StringComparison.Ordinal) == true;
         userLists = new();
@@ -435,6 +437,8 @@ else
         await InvokeAsync(async () =>
         {
             userLists = JsonSerializer.Deserialize<List<TodoList>>(listsJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new();
+            // Firestore creates IDs asynchronously; compare the before/after list IDs to select
+            // the new list even when another existing list has the same title.
             var newlyCreated = pendingListTitle is null
                 ? null
                 : userLists.FirstOrDefault(list =>
@@ -573,6 +577,7 @@ else
 
     private async Task CreateList()
     {
+        // The listener returns the new document; keep the prior IDs to distinguish it from existing lists.
         pendingListTitle = newListForm.Title.Trim();
         listIdsBeforeCreate = userLists.Select(list => list.Id).ToHashSet(StringComparer.Ordinal);
         await RunAction(async () =>
@@ -714,6 +719,7 @@ else
         {
             await action();
         }
+        // JS interop wraps errors from Firebase and the browser as JSException.
         catch (JSException exception)
         {
             errorMessage = FriendlyError(exception.Message);

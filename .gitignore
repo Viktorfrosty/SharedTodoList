@@ -24,3 +24,5 @@ ui-debug.log
 
 # Node.js dependencies
 node_modules/
+
+/docs

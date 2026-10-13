@@ -32,6 +32,9 @@ service cloud.firestore {
     }
 
     match /lists/{listId} {
+      // Keep this membership check aligned with the client's members array-contains query.
+      // Firestore rules are not filters; a query is allowed only when its constraints prove
+      // that every returned document passes this rule.
       allow read: if signedIn()
         && request.auth.token.email.lower() in resource.data.members;
 

@@ -31,6 +31,8 @@ export async function initialize(component) {
     app = firebase.initializeApp(firebaseConfig);
     auth = firebase.getAuth(app);
     database = firebase.getFirestore(app);
+    // Firebase Auth restores a saved session asynchronously; wait for this callback
+    // before treating the visitor as signed out or starting their list query.
     firebase.onAuthStateChanged(auth, async user => {
         if (user && !user.emailVerified) {
             currentUser = null;
@@ -49,6 +51,7 @@ async function loadFirebaseConfig() {
     const configUrl = new URL("./firebase-config.local.js", import.meta.url);
     const response = await fetch(configUrl, { method: "HEAD" });
     if (response.status === 404) {
+        // Missing local config is expected for a clean checkout and enables demo mode.
         return defaultFirebaseConfig;
     }
     if (!response.ok) {
@@ -68,6 +71,7 @@ export async function signInWithEmail(email, password) {
     ensureFirebase();
     const credential = await firebase.signInWithEmailAndPassword(auth, email.trim(), password);
     if (!credential.user.emailVerified) {
+        // Rules also require verified email; sign out here so the UI matches that boundary.
         await firebase.sendEmailVerification(credential.user);
         await firebase.signOut(auth);
         throw new Error("Your email isn't verified yet. We sent a new verification link; open it before signing in.");
@@ -118,6 +122,7 @@ export async function enterDemo(displayName, email) {
     };
     localData.user = currentUser;
     if (localData.lists.length === 0) {
+        // Seed only a fresh demo so returning users keep the changes saved in this browser.
         const listId = crypto.randomUUID();
         localData.lists.push({
             id: listId,
@@ -158,6 +163,7 @@ export async function watchTasks(listId, component) {
     }
 
     const taskCollection = firebase.collection(database, "lists", listId, "tasks");
+    // Tear down the previous listener above when switching lists to avoid stale task updates.
     tasksUnsubscribe = firebase.onSnapshot(taskCollection, snapshot => {
         const tasks = snapshot.docs.map(item => ({ id: item.id, listId, ...item.data() }))
             .sort((a, b) => Number(a.createdAt ?? 0) - Number(b.createdAt ?? 0));
@@ -180,6 +186,7 @@ export async function createList(title) {
         title: cleanTitle,
         ownerUid: currentUser.uid,
         ownerEmail: currentUser.email.toLowerCase(),
+        // Membership is stored lowercase because the list query and rules compare normalized emails.
         members: [currentUser.email.toLowerCase()],
         createdAt: Date.now(),
         deletionInProgress: false,
@@ -217,6 +224,7 @@ export async function deleteList(listId) {
     }
     const listData = listSnapshot.data();
     if (listData.deleted === true) return;
+    // Revoke shared access before cleaning up tasks; keep the parent as a tombstone.
     if (listData.deletionInProgress !== true) {
         await firebase.updateDoc(listRef, {
             deletionInProgress: true,
@@ -225,6 +233,7 @@ export async function deleteList(listId) {
     }
 
     const tasks = await firebase.getDocs(firebase.collection(database, "lists", listId, "tasks"));
+    // Firestore batches are limited to 500 writes; stay below the limit for safe cleanup.
     for (let index = 0; index < tasks.docs.length; index += 400) {
         const batch = firebase.writeBatch(database);
         for (const task of tasks.docs.slice(index, index + 400)) batch.delete(task.ref);
@@ -303,6 +312,7 @@ export async function addMember(listId, email) {
         await publishLists();
         return;
     }
+    // arrayUnion makes repeated invites idempotent; Firestore rules still decide who may invite.
     await firebase.updateDoc(firebase.doc(database, "lists", listId), { members: firebase.arrayUnion(normalizedEmail) });
 }
 
@@ -340,6 +350,7 @@ export async function updateProfile(displayName) {
         await publishAuth(profileFromUser(currentUser));
         return;
     }
+    // Auth owns the signed-in profile; the user document keeps a copy for app data.
     await firebase.updateProfile(currentUser, { displayName: name });
     await firebase.setDoc(firebase.doc(database, "users", currentUser.uid), {
         uid: currentUser.uid,
@@ -373,6 +384,7 @@ function watchLists() {
         publishLists([]);
         return;
     }
+    // Keep this filter aligned with the list read rule: Firestore rules don't filter results.
     const listsQuery = firebase.query(
         firebase.collection(database, "lists"),
         firebase.where("members", "array-contains", currentUser.email.toLowerCase())
@@ -398,6 +410,7 @@ function readLocalData() {
     const saved = localStorage.getItem(storageKey);
     if (!saved) return { user: null, lists: [], tasks: {} };
     const parsed = JSON.parse(saved);
+    // Older demo saves may omit newer fields, so tolerate missing top-level values.
     return {
         user: parsed.user ?? null,
         lists: Array.isArray(parsed.lists) ? parsed.lists : [],
