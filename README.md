@@ -46,6 +46,14 @@ Open a list and choose **Share**. Add the email address the other person will us
 
 Deleting a cloud list first closes member access, removes its tasks, and then marks the list as deleted. The parent document is kept as a hidden record. Firestore doesn't delete subcollection documents automatically, so keeping that record avoids reusing a list ID while leftover tasks might still exist.
 
+### Delete your account
+
+Open your profile and choose **Delete account**. Email-and-password accounts are asked for their password again; Google accounts ask you to confirm with Google. Lists you own that are shared with others need a decision first: delete the list and its tasks, or transfer it to a collaborator who has signed in since ownership transfer was added. A collaborator who hasn't signed in yet won't be offered as a transfer option; ask them to sign in once, then reopen the profile.
+
+For lists owned by someone else, account deletion removes your membership and changes tasks assigned to you back to **Anyone**. Tasks you created are kept, but their creator reference is cleared. Your Firebase profile record and sign-in are deleted after list cleanup completes. If cleanup hits an error, already-finished list changes may remain; review the affected lists and retry. If Firebase refuses the final account deletion, the profile record may already be gone while sign-in still works, so sign in again and retry.
+
+In local demo mode, this button only clears the demo data stored in the current browser. It does not delete a Firebase account.
+
 ## Run the Firestore rules tests
 
 The emulator tests use a made-up demo project ID and local data; they do not connect to or change the production Firebase project. Install Node.js and Java 21 or later, then run:
@@ -55,7 +63,7 @@ npm install
 npm run test:rules
 ```
 
-The tests check the member-filtered list query, list creation, and denial of unfiltered reads and unverified users. A passing rules test is useful, but it doesn't replace trying the full app with two real accounts.
+The tests check the member-filtered list query, list creation, verified membership identity, member removal and leaving, ownership transfer, task anonymization, deleted-list cleanup, and denial of unfiltered reads and unverified users. A passing rules test is useful, but it doesn't replace trying the full app with two real accounts.
 
 ## Publish to GitHub Pages
 

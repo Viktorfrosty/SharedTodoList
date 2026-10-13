@@ -212,6 +212,20 @@ h1, h2, p { margin-top: 0; }
 .modal-card form { display: grid; gap: 9px; }
 .modal-card form .button { margin-top: 12px; }
 .modal-card input { width: 100%; }
+.account-danger-zone { display: grid; gap: 10px; margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--line); }
+.account-danger-zone h3 { margin: 0; color: #8b382d; font: 600 17px/1.3 var(--serif); }
+.account-danger-zone > p { margin: 0; color: #62655e; font-size: 11px; line-height: 1.6; }
+.account-danger-zone .deletion-warning { color: #763d35; }
+.danger-button { justify-self: start; padding: 9px 13px; border: 1px solid #a94c42; border-radius: 7px; background: #fff8f6; color: #8b382d; font-size: 11px; font-weight: 650; cursor: pointer; }
+.danger-button:hover:not(:disabled) { background: #fcebed; }
+.danger-button:disabled { opacity: .55; cursor: not-allowed; }
+.delete-list-choice { display: grid; gap: 6px; }
+.delete-list-choice label, .account-danger-zone > label:not(.deletion-confirmation) { margin: 0; color: #53584f; font-size: 11px; font-weight: 600; }
+.delete-list-choice select { width: 100%; padding: 9px 10px; border: 1px solid #d6d7cf; border-radius: 7px; background: white; color: #454940; font: inherit; font-size: 11px; }
+.delete-list-choice small, .account-danger-zone > small, .reauth-note { color: #62655e; font-size: 10px; line-height: 1.55; }
+.deletion-confirmation { display: flex; align-items: center; gap: 8px; margin: 3px 0 !important; color: #53584f; font-size: 10px !important; font-weight: 500 !important; }
+.modal-card .deletion-confirmation input { flex: 0 0 auto; width: 16px; height: 16px; margin: 0; accent-color: #8b382d; }
+.cancel-delete-button { justify-self: start; font-size: 11px; }
 .member-list { display: grid; gap: 13px; max-height: 195px; overflow-y: auto; margin: 18px 0 24px; }
 .member-row { display: flex; align-items: center; gap: 10px; }
 .member-details { display: grid; min-width: 0; flex: 1; gap: 3px; }

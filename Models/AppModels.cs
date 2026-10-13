@@ -6,6 +6,7 @@ public class UserProfile
     public string DisplayName { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;
     public string PhotoURL { get; set; } = string.Empty;
+    public List<string> ProviderIds { get; set; } = new();
 }
 
 public class TodoList
@@ -14,6 +15,7 @@ public class TodoList
     public string Title { get; set; } = string.Empty;
     public string OwnerUid { get; set; } = string.Empty;
     public List<string> Members { get; set; } = new();
+    public Dictionary<string, string> MemberUids { get; set; } = new();
     public long CreatedAt { get; set; }
     public bool DeletionInProgress { get; set; }
     public bool Deleted { get; set; }

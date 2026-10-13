@@ -9,11 +9,13 @@ import {
 } from "@firebase/rules-unit-testing";
 import {
     collection,
+    deleteDoc,
     doc,
     getDoc,
     getDocs,
     query,
     setDoc,
+    updateDoc,
     where
 } from "firebase/firestore";
 
@@ -49,6 +51,7 @@ test("member-filtered list query reads only lists containing the signed-in email
             title: "Shared list",
             ownerUid: owner.uid,
             members: [owner.email],
+            memberUids: { [owner.email]: owner.uid },
             deletionInProgress: false,
             deleted: false
         });
@@ -98,6 +101,7 @@ test("verified user can create a list using the app's Firestore document shape",
         ownerUid: owner.uid,
         ownerEmail: owner.email,
         members: [owner.email],
+        memberUids: { [owner.email]: owner.uid },
         createdAt: Date.now(),
         deletionInProgress: false,
         deleted: false
@@ -116,7 +120,205 @@ test("unverified user cannot create a list", async () => {
         title: "Should be denied",
         ownerUid: owner.uid,
         members: [owner.email],
+        memberUids: { [owner.email]: owner.uid },
         deletionInProgress: false,
         deleted: false
     }));
+});
+
+test("verified member can claim only their own email-to-UID mapping", async () => {
+    const member = { uid: "member-uid", email: "member@example.com" };
+    await testEnvironment.withSecurityRulesDisabled(async context => {
+        await setDoc(doc(context.firestore(), "lists", "legacy-member-list"), {
+            title: "Legacy shared list",
+            ownerUid: owner.uid,
+            members: [owner.email, member.email],
+            deletionInProgress: false,
+            deleted: false
+        });
+    });
+
+    const database = testEnvironment
+        .authenticatedContext(member.uid, {
+            email: member.email,
+            email_verified: true
+        })
+        .firestore();
+
+    await assertSucceeds(updateDoc(doc(database, "lists", "legacy-member-list"), {
+        memberUids: { [member.email]: member.uid }
+    }));
+    await assertFails(updateDoc(doc(database, "lists", "legacy-member-list"), {
+        memberUids: { [member.email]: member.uid, [owner.email]: "forged-owner-uid" }
+    }));
+});
+
+test("owner can transfer a list to a verified member whose UID has been established", async () => {
+    const member = { uid: "transfer-member-uid", email: "transfer-member@example.com" };
+    await testEnvironment.withSecurityRulesDisabled(async context => {
+        await setDoc(doc(context.firestore(), "lists", "transfer-list"), {
+            title: "Moving list",
+            ownerUid: owner.uid,
+            ownerEmail: owner.email,
+            members: [owner.email, member.email],
+            memberUids: { [owner.email]: owner.uid, [member.email]: member.uid },
+            deletionInProgress: false,
+            deleted: false
+        });
+    });
+
+    const ownerDatabase = testEnvironment
+        .authenticatedContext(owner.uid, {
+            email: owner.email,
+            email_verified: true
+        })
+        .firestore();
+
+    await assertSucceeds(updateDoc(doc(ownerDatabase, "lists", "transfer-list"), {
+        ownerUid: member.uid,
+        ownerEmail: member.email,
+        members: [member.email],
+        memberUids: { [member.email]: member.uid }
+    }));
+
+    const memberDatabase = testEnvironment
+        .authenticatedContext(member.uid, {
+            email: member.email,
+            email_verified: true
+        })
+        .firestore();
+    const transferred = await assertSucceeds(getDoc(doc(memberDatabase, "lists", "transfer-list")));
+    assert.equal(transferred.data().ownerUid, member.uid);
+    await assertFails(getDoc(doc(ownerDatabase, "lists", "transfer-list")));
+});
+
+test("owner can remove a member and that member's UID mapping together", async () => {
+    const member = { uid: "removed-member-uid", email: "removed-member@example.com" };
+    await testEnvironment.withSecurityRulesDisabled(async context => {
+        await setDoc(doc(context.firestore(), "lists", "remove-member-list"), {
+            title: "Shared list",
+            ownerUid: owner.uid,
+            members: [owner.email, member.email],
+            memberUids: { [owner.email]: owner.uid, [member.email]: member.uid },
+            deletionInProgress: false,
+            deleted: false
+        });
+    });
+
+    const ownerDatabase = testEnvironment
+        .authenticatedContext(owner.uid, {
+            email: owner.email,
+            email_verified: true
+        })
+        .firestore();
+    await assertFails(updateDoc(doc(ownerDatabase, "lists", "remove-member-list"), {
+        members: [member.email],
+        memberUids: { [member.email]: member.uid }
+    }));
+    await assertSucceeds(updateDoc(doc(ownerDatabase, "lists", "remove-member-list"), {
+        members: [owner.email],
+        memberUids: { [owner.email]: owner.uid }
+    }));
+
+    const memberDatabase = testEnvironment
+        .authenticatedContext(member.uid, {
+            email: member.email,
+            email_verified: true
+        })
+        .firestore();
+    await assertFails(getDoc(doc(memberDatabase, "lists", "remove-member-list")));
+});
+
+test("a member can leave after task assignments and creator references are cleared", async () => {
+    const member = { uid: "leaving-member-uid", email: "leaving-member@example.com" };
+    await testEnvironment.withSecurityRulesDisabled(async context => {
+        const database = context.firestore();
+        await setDoc(doc(database, "lists", "leave-list"), {
+            title: "List to leave",
+            ownerUid: owner.uid,
+            ownerEmail: owner.email,
+            members: [owner.email, member.email],
+            memberUids: { [owner.email]: owner.uid, [member.email]: member.uid },
+            deletionInProgress: false,
+            deleted: false
+        });
+        await setDoc(doc(database, "lists", "leave-list", "tasks", "member-task"), {
+            title: "Task created by member",
+            listId: "leave-list",
+            isCompleted: false,
+            assignedToEmail: member.email,
+            createdByUid: member.uid
+        });
+    });
+
+    const memberDatabase = testEnvironment
+        .authenticatedContext(member.uid, {
+            email: member.email,
+            email_verified: true
+        })
+        .firestore();
+    const taskRef = doc(memberDatabase, "lists", "leave-list", "tasks", "member-task");
+
+    await assertSucceeds(updateDoc(taskRef, {
+        assignedToEmail: "",
+        createdByUid: ""
+    }));
+    await assertFails(updateDoc(taskRef, { createdByUid: "another-user" }));
+    await assertSucceeds(updateDoc(doc(memberDatabase, "lists", "leave-list"), {
+        members: [owner.email],
+        memberUids: { [owner.email]: owner.uid }
+    }));
+    await assertFails(getDoc(doc(memberDatabase, "lists", "leave-list")));
+});
+
+test("list deletion can finish by scrubbing identifying owner and member data", async () => {
+    const member = { uid: "tombstone-member-uid", email: "tombstone-member@example.com" };
+    await testEnvironment.withSecurityRulesDisabled(async context => {
+        await setDoc(doc(context.firestore(), "lists", "tombstone-list"), {
+            title: "Private list title",
+            ownerUid: owner.uid,
+            ownerEmail: owner.email,
+            members: [owner.email, member.email],
+            memberUids: { [owner.email]: owner.uid, [member.email]: member.uid },
+            deletionInProgress: false,
+            deleted: false
+        });
+        await setDoc(doc(context.firestore(), "lists", "tombstone-list", "tasks", "leftover-task"), {
+            title: "Remove me",
+            listId: "tombstone-list",
+            isCompleted: false,
+            assignedToEmail: owner.email,
+            createdByUid: owner.uid
+        });
+    });
+
+    const ownerDatabase = testEnvironment
+        .authenticatedContext(owner.uid, {
+            email: owner.email,
+            email_verified: true
+        })
+        .firestore();
+    const listRef = doc(ownerDatabase, "lists", "tombstone-list");
+    await assertSucceeds(updateDoc(listRef, {
+        deletionInProgress: true,
+        members: [owner.email]
+    }));
+    const taskRef = doc(ownerDatabase, "lists", "tombstone-list", "tasks", "leftover-task");
+    await assertSucceeds(getDoc(taskRef));
+    await assertSucceeds(deleteDoc(taskRef));
+    await assertSucceeds(updateDoc(listRef, {
+        deleted: true,
+        title: "Deleted list",
+        ownerUid: "",
+        ownerEmail: "",
+        members: [],
+        memberUids: {}
+    }));
+    await assertFails(getDoc(listRef));
+    let tombstone;
+    await testEnvironment.withSecurityRulesDisabled(async context => {
+        tombstone = await getDoc(doc(context.firestore(), "lists", "tombstone-list"));
+    });
+    assert.equal(tombstone.data().ownerEmail, "");
+    assert.deepEqual(tombstone.data().members, []);
 });

@@ -188,6 +188,7 @@ export async function createList(title) {
         ownerEmail: currentUser.email.toLowerCase(),
         // Membership is stored lowercase because the list query and rules compare normalized emails.
         members: [currentUser.email.toLowerCase()],
+        memberUids: { [currentUser.email.toLowerCase()]: currentUser.uid },
         createdAt: Date.now(),
         deletionInProgress: false,
         deleted: false
@@ -217,6 +218,10 @@ export async function deleteList(listId) {
         return;
     }
 
+    await deleteCloudList(listId);
+}
+
+async function deleteCloudList(listId) {
     const listRef = firebase.doc(database, "lists", listId);
     const listSnapshot = await firebase.getDoc(listRef);
     if (!listSnapshot.exists()) {
@@ -239,7 +244,14 @@ export async function deleteList(listId) {
         for (const task of tasks.docs.slice(index, index + 400)) batch.delete(task.ref);
         await batch.commit();
     }
-    await firebase.updateDoc(listRef, { deleted: true });
+    await firebase.updateDoc(listRef, {
+        deleted: true,
+        title: "Deleted list",
+        ownerUid: "",
+        ownerEmail: "",
+        members: [],
+        memberUids: {}
+    });
 }
 
 export async function createTask(listId, title, assignedToEmail) {
@@ -335,9 +347,130 @@ export async function removeMember(listId, email) {
         await publishLists();
         return;
     }
-    await firebase.updateDoc(firebase.doc(database, "lists", listId), {
-        members: firebase.arrayRemove(normalizedEmail)
+    const listRef = firebase.doc(database, "lists", listId);
+    await firebase.runTransaction(database, async transaction => {
+        const snapshot = await transaction.get(listRef);
+        if (!snapshot.exists()) throw new Error("That list could not be found. Refresh and try again.");
+        const memberUids = snapshot.data().memberUids ?? {};
+        delete memberUids[normalizedEmail];
+        transaction.update(listRef, {
+            members: firebase.arrayRemove(normalizedEmail),
+            memberUids
+        });
     });
+}
+
+export async function deleteAccount(listChoices, password) {
+    requireSignedIn();
+    if (isDemo()) {
+        localStorage.removeItem(storageKey);
+        localData = { user: null, lists: [], tasks: {} };
+        currentUser = null;
+        await publishAuth(null);
+        await publishLists([]);
+        return;
+    }
+
+    // Start reauthentication directly from the user's confirmation click, before
+    // any Firestore reads can use up the browser's transient popup activation.
+    await reauthenticateForDeletion(password);
+
+    const email = currentUser.email.toLowerCase();
+    const listSnapshot = await firebase.getDocs(firebase.query(
+        firebase.collection(database, "lists"),
+        firebase.where("members", "array-contains", email)
+    ));
+    const lists = listSnapshot.docs.map(item => ({ id: item.id, ...item.data() }));
+    const ownedLists = lists.filter(list => list.ownerUid === currentUser.uid);
+    const choices = listChoices ?? {};
+
+    // Check every shared list decision before making any irreversible changes.
+    for (const list of ownedLists) {
+        const collaborators = list.members.filter(member => member !== email);
+        if (collaborators.length === 0) continue;
+        const choice = choices[list.id];
+        if (choice === "delete") continue;
+        if (typeof choice === "string" && choice.startsWith("transfer:")) {
+            const newOwnerEmail = choice.slice("transfer:".length);
+            if (!collaborators.includes(newOwnerEmail)
+                || list.memberUids?.[newOwnerEmail] === undefined) {
+                throw new Error(`Choose an active member or delete the shared list “${list.title}”.`);
+            }
+            continue;
+        }
+        throw new Error(`Choose what to do with the shared list “${list.title}” before deleting your account.`);
+    }
+
+    for (const list of lists) {
+        const listRef = firebase.doc(database, "lists", list.id);
+        if (list.ownerUid === currentUser.uid) {
+            const choice = choices[list.id];
+            const collaborators = list.members.filter(member => member !== email);
+            if (collaborators.length === 0 || choice === "delete") {
+                await deleteCloudList(list.id);
+                continue;
+            }
+
+            await clearUserTaskReferences(list.id, email, currentUser.uid);
+            const newOwnerEmail = choice.slice("transfer:".length);
+            const memberUids = { ...(list.memberUids ?? {}) };
+            const newOwnerUid = memberUids[newOwnerEmail];
+            delete memberUids[email];
+            await firebase.updateDoc(listRef, {
+                ownerUid: newOwnerUid,
+                ownerEmail: newOwnerEmail,
+                members: firebase.arrayRemove(email),
+                memberUids
+            });
+            continue;
+        }
+
+        await clearUserTaskReferences(list.id, email, currentUser.uid);
+        const memberUids = { ...(list.memberUids ?? {}) };
+        delete memberUids[email];
+        await firebase.updateDoc(listRef, {
+            members: firebase.arrayRemove(email),
+            memberUids
+        });
+    }
+
+    await firebase.deleteDoc(firebase.doc(database, "users", currentUser.uid));
+    await firebase.deleteUser(currentUser);
+}
+
+async function reauthenticateForDeletion(password) {
+    const providerIds = currentUser.providerData.map(provider => provider.providerId);
+    if (providerIds.includes("password")) {
+        if (typeof password !== "string" || password.length === 0) {
+            throw new Error("Enter your password to confirm account deletion.");
+        }
+        const credential = firebase.EmailAuthProvider.credential(currentUser.email, password);
+        await firebase.reauthenticateWithCredential(currentUser, credential);
+        return;
+    }
+    if (providerIds.includes("google.com")) {
+        await firebase.reauthenticateWithPopup(currentUser, new firebase.GoogleAuthProvider());
+        return;
+    }
+    throw new Error("This sign-in method can't re-verify your account here. Sign in again, then retry account deletion.");
+}
+
+async function clearUserTaskReferences(listId, email, uid) {
+    const tasks = await firebase.getDocs(firebase.collection(database, "lists", listId, "tasks"));
+    for (let index = 0; index < tasks.docs.length; index += 400) {
+        const batch = firebase.writeBatch(database);
+        let updateCount = 0;
+        for (const task of tasks.docs.slice(index, index + 400)) {
+            const updates = {};
+            if (task.data().assignedToEmail === email) updates.assignedToEmail = "";
+            if (task.data().createdByUid === uid) updates.createdByUid = "";
+            if (Object.keys(updates).length > 0) {
+                batch.update(task.ref, updates);
+                updateCount++;
+            }
+        }
+        if (updateCount > 0) await batch.commit();
+    }
 }
 
 export async function updateProfile(displayName) {
@@ -395,7 +528,29 @@ function watchLists() {
             .filter(list => list.deleted !== true)
             .sort((a, b) => Number(a.createdAt ?? 0) - Number(b.createdAt ?? 0));
         publishLists(lists);
+        for (const list of lists) {
+            ensureMemberIdentity(list);
+        }
     }, reportError);
+}
+
+async function ensureMemberIdentity(list) {
+    const email = currentUser?.email?.toLowerCase();
+    if (!email || list.memberUids?.[email] === currentUser.uid) return;
+    const listRef = firebase.doc(database, "lists", list.id);
+    try {
+        await firebase.runTransaction(database, async transaction => {
+            const snapshot = await transaction.get(listRef);
+            if (!snapshot.exists()) return;
+            const memberUids = snapshot.data().memberUids ?? {};
+            if (memberUids[email] === currentUser.uid) return;
+            transaction.update(listRef, {
+                memberUids: { ...memberUids, [email]: currentUser.uid }
+            });
+        });
+    } catch (error) {
+        reportError(error);
+    }
 }
 
 function profileFromUser(user) {
@@ -403,7 +558,8 @@ function profileFromUser(user) {
         uid: user.uid,
         displayName: user.displayName ?? user.email?.split("@")[0] ?? "Home member",
         email: user.email ?? "",
-        photoURL: user.photoURL ?? ""
+        photoURL: user.photoURL ?? "",
+        providerIds: (user.providerData ?? []).map(provider => provider.providerId)
     };
 }
 

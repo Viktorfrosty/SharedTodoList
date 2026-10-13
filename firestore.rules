@@ -27,6 +27,83 @@ service cloud.firestore {
           .hasAny([email]);
     }
 
+    function isMemberIdentityClaim(listId) {
+      let email = request.auth.token.email.lower();
+      let oldMemberUids = resource.data.get('memberUids', {});
+      return isListMember(listId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberUids'])
+        && request.resource.data.memberUids is map
+        && request.resource.data.memberUids.get(email, '') == request.auth.uid
+        && request.resource.data.memberUids.diff(oldMemberUids)
+          .affectedKeys().hasOnly([email]);
+    }
+
+    function isMemberLeaving(listId) {
+      let email = request.auth.token.email.lower();
+      let oldMemberUids = resource.data.get('memberUids', {});
+      return isListMember(listId)
+        && resource.data.ownerUid != request.auth.uid
+        && resource.data.get('deletionInProgress', false) != true
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['members', 'memberUids'])
+        && request.resource.data.members == resource.data.members.removeAll([email])
+        && request.resource.data.memberUids is map
+        && request.resource.data.memberUids.diff(oldMemberUids)
+          .affectedKeys().hasOnly([email])
+        && !(email in request.resource.data.memberUids);
+    }
+
+    function isOwnerRemovingMembers(listId) {
+      let oldMemberUids = resource.data.get('memberUids', {});
+      let removedEmails = resource.data.members.removeAll(request.resource.data.members);
+      let expectedMemberUids = oldMemberUids.keys().removeAll(removedEmails);
+      return isListOwner(listId)
+        && resource.data.get('deletionInProgress', false) != true
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['members', 'memberUids'])
+        && request.resource.data.members is list
+        && request.resource.data.members.size() < resource.data.members.size()
+        && resource.data.members.hasAll(request.resource.data.members)
+        && request.resource.data.members.hasAny([request.auth.token.email.lower()])
+        && request.resource.data.memberUids is map
+        && request.resource.data.memberUids.diff(oldMemberUids)
+          .affectedKeys().hasOnly(removedEmails)
+        && request.resource.data.memberUids.keys().hasAll(expectedMemberUids)
+        && expectedMemberUids.hasAll(request.resource.data.memberUids.keys());
+    }
+
+    function isOwnerTransfer(listId) {
+      let email = request.auth.token.email.lower();
+      let oldMemberUids = resource.data.get('memberUids', {});
+      let newOwnerEmail = request.resource.data.ownerEmail;
+      return isListOwner(listId)
+        && resource.data.get('deletionInProgress', false) != true
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['ownerUid', 'ownerEmail', 'members', 'memberUids'])
+        && newOwnerEmail is string
+        && newOwnerEmail != email
+        && newOwnerEmail in resource.data.members
+        && request.resource.data.ownerUid == oldMemberUids.get(newOwnerEmail, '')
+        && request.resource.data.members == resource.data.members.removeAll([email])
+        && request.resource.data.memberUids is map
+        && request.resource.data.memberUids.diff(oldMemberUids)
+          .affectedKeys().hasOnly([email])
+        && !(email in request.resource.data.memberUids);
+    }
+
+    function isDeletedListTombstone(listId) {
+      return isListOwner(listId)
+        && resource.data.get('deletionInProgress', false) == true
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['deleted', 'title', 'ownerUid', 'ownerEmail', 'members', 'memberUids'])
+        && request.resource.data.get('deleted', false) == true
+        && request.resource.data.title == 'Deleted list'
+        && request.resource.data.ownerUid == ''
+        && request.resource.data.ownerEmail == ''
+        && request.resource.data.members == []
+        && request.resource.data.memberUids == {};
+    }
+
     match /users/{userId} {
       allow read, write: if signedIn() && request.auth.uid == userId;
     }
@@ -42,28 +119,33 @@ service cloud.firestore {
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.members is list
         && request.resource.data.members.hasAny([request.auth.token.email.lower()])
+        && request.resource.data.memberUids is map
+        && request.resource.data.memberUids.get(request.auth.token.email.lower(), '') == request.auth.uid
         && request.resource.data.get('deletionInProgress', false) == false
         && request.resource.data.get('deleted', false) == false
         && request.resource.data.title is string
         && request.resource.data.title.size() > 0
         && request.resource.data.title.size() <= 60;
 
-      allow update: if isListOwner(listId)
-        && request.resource.data.ownerUid == resource.data.ownerUid
-        && request.resource.data.members.hasAny([request.auth.token.email.lower()])
-        && request.resource.data.title is string
-        && request.resource.data.title.size() > 0
-        && request.resource.data.title.size() <= 60
-        && (resource.data.get('deletionInProgress', false) == true
-          ? request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleted'])
-            && request.resource.data.get('deleted', false) == true
-          : request.resource.data.diff(resource.data).affectedKeys()
-              .hasOnly(['title', 'members', 'deletionInProgress'])
-            && request.resource.data.get('deletionInProgress', false) is bool
-            && (request.resource.data.get('deletionInProgress', false) == false
-              || (request.resource.data.members is list
-                && request.resource.data.members.size() == 1
-                && request.resource.data.members.hasAny([request.auth.token.email.lower()]))));
+      allow update: if isMemberIdentityClaim(listId)
+        || isMemberLeaving(listId)
+        || isOwnerRemovingMembers(listId)
+        || isOwnerTransfer(listId)
+        || isDeletedListTombstone(listId)
+        || (isListOwner(listId)
+          && request.resource.data.ownerUid == resource.data.ownerUid
+          && request.resource.data.members.hasAny([request.auth.token.email.lower()])
+          && request.resource.data.title is string
+          && request.resource.data.title.size() > 0
+          && request.resource.data.title.size() <= 60
+          && resource.data.get('deletionInProgress', false) != true
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['title', 'members', 'deletionInProgress'])
+          && request.resource.data.get('deletionInProgress', false) is bool
+          && (request.resource.data.get('deletionInProgress', false) == false
+            || (request.resource.data.members is list
+              && request.resource.data.members.size() == 1
+              && request.resource.data.members.hasAny([request.auth.token.email.lower()]))));
 
       allow delete: if false;
 
@@ -84,11 +166,14 @@ service cloud.firestore {
 
         allow update: if isListMember(listId)
           && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['title', 'isCompleted', 'assignedToEmail'])
+            .hasOnly(['title', 'isCompleted', 'assignedToEmail', 'createdByUid'])
           && request.resource.data.title is string
           && request.resource.data.title.size() > 0
           && request.resource.data.title.size() <= 120
           && request.resource.data.isCompleted is bool
+          && (request.resource.data.createdByUid == resource.data.createdByUid
+            || (resource.data.createdByUid == request.auth.uid
+              && request.resource.data.createdByUid == ''))
           && (request.resource.data.assignedToEmail == resource.data.assignedToEmail
             || validAssignment(listId, request.resource.data.assignedToEmail));
 

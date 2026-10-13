@@ -341,6 +341,78 @@ else
                     <InputText id="profile-email" @bind-Value="profileForm.Email" disabled />
                     <button class="button button-dark button-wide" type="submit">Save changes</button>
                 </EditForm>
+                <section class="account-danger-zone" aria-labelledby="delete-account-title">
+                    <h3 id="delete-account-title">Delete account</h3>
+                    @if (!showDeleteAccount)
+                    {
+                        <p>@(isDemo
+                            ? "Clear this browser's local demo data."
+                            : "Permanently remove your account and decide what happens to any shared lists you own.")</p>
+                        <button class="danger-button" @onclick="OpenAccountDeletion">
+                            @(isDemo ? "Clear demo data" : "Delete account")
+                        </button>
+                    }
+                    else
+                    {
+                        <p class="deletion-warning">
+                            @(isDemo
+                                ? "This clears the demo user and every list saved in this browser. It does not affect a Firebase account."
+                                : "This permanently deletes your sign-in and removes your access to shared lists. This cannot be undone.")
+                        </p>
+                        @if (!isDemo)
+                        {
+                            @foreach (var list in OwnedSharedLists)
+                            {
+                                var transferCandidates = GetTransferCandidates(list).ToList();
+                                <div class="delete-list-choice">
+                                    <label for="delete-choice-@list.Id">“@list.Title”</label>
+                                    <select id="delete-choice-@list.Id"
+                                            value="@GetDeleteChoice(list.Id)"
+                                            @onchange="args => SetDeleteChoice(list.Id, args)">
+                                        <option value="">Choose what happens to this list</option>
+                                        <option value="delete">Delete the list and its tasks</option>
+                                        @foreach (var member in transferCandidates)
+                                        {
+                                            <option value="@($"transfer:{member}")">Transfer to @member</option>
+                                        }
+                                    </select>
+                                    @if (transferCandidates.Count == 0)
+                                    {
+                                        <small>No collaborator is ready for ownership transfer yet. They can sign in once after this update, or you can delete the list.</small>
+                                    }
+                                </div>
+                            }
+                            @if (currentUser.ProviderIds.Contains("password", StringComparer.Ordinal))
+                            {
+                                <label for="delete-account-password">Password</label>
+                                <InputText id="delete-account-password"
+                                           type="password"
+                                           @bind-Value="deletionPassword"
+                                           autocomplete="current-password"
+                                           maxlength="128" />
+                                <small>Enter your password again to confirm it’s really you.</small>
+                            }
+                            else if (currentUser.ProviderIds.Contains("google.com", StringComparer.Ordinal))
+                            {
+                                <p class="reauth-note">Google will ask you to confirm your identity before anything is deleted.</p>
+                            }
+                        }
+                        <label class="deletion-confirmation">
+                            <InputCheckbox @bind-Value="deletionAcknowledged" />
+                            <span>I understand this action is permanent.</span>
+                        </label>
+                        @if (!string.IsNullOrWhiteSpace(accountDeletionError))
+                        {
+                            <p class="alert-message" role="alert">@accountDeletionError</p>
+                        }
+                        <button class="danger-button"
+                                disabled="@(!CanConfirmAccountDeletion || deletingAccount)"
+                                @onclick="DeleteAccount">
+                            @(deletingAccount ? "Deleting…" : isDemo ? "Clear demo data" : "Permanently delete account")
+                        </button>
+                        <button class="text-button cancel-delete-button" disabled="@deletingAccount" @onclick="CancelAccountDeletion">Keep my account</button>
+                    }
+                </section>
                 <button class="sign-out-button" @onclick="SignOut">@(isDemo ? "Exit local demo" : "Sign out")</button>
             </section>
         </div>
@@ -359,6 +431,7 @@ else
     private readonly TaskForm taskEditForm = new();
     private readonly InviteForm inviteForm = new();
     private readonly UserProfile profileForm = new();
+    private readonly Dictionary<string, string> accountDeletionChoices = new();
     private List<TodoList> userLists = new();
     private List<TodoTask> currentTasks = new();
     private TodoList? selectedList;
@@ -370,6 +443,9 @@ else
     private bool showCreateList;
     private bool showMembers;
     private bool showProfile;
+    private bool showDeleteAccount;
+    private bool deletionAcknowledged;
+    private bool deletingAccount;
     private bool editingListTitle;
     private string? editingTaskId;
     private string? pendingListTitle;
@@ -377,10 +453,21 @@ else
     private string taskFilter = "all";
     private string? errorMessage;
     private string? authMessage;
+    private string? accountDeletionError;
+    private string deletionPassword = string.Empty;
 
     private int completedCount => currentTasks.Count(task => task.IsCompleted);
     private int remainingCount => currentTasks.Count - completedCount;
     private bool canManageList => selectedList is not null && selectedList.OwnerUid == currentUser?.Uid;
+    private IEnumerable<TodoList> OwnedSharedLists => userLists.Where(list =>
+        list.OwnerUid == currentUser?.Uid
+        && list.Members.Any(member => !string.Equals(member, currentUser?.Email, StringComparison.OrdinalIgnoreCase)));
+    private bool CanConfirmAccountDeletion => deletionAcknowledged
+        && (isDemo || OwnedSharedLists.All(list =>
+            accountDeletionChoices.TryGetValue(list.Id, out var choice)
+            && (choice == "delete"
+                || (choice.StartsWith("transfer:", StringComparison.Ordinal)
+                    && GetTransferCandidates(list).Contains(choice["transfer:".Length..], StringComparer.OrdinalIgnoreCase)))));
     private string ProgressWidth => currentTasks.Count == 0 ? "0%" : $"{completedCount * 100.0 / currentTasks.Count:0.#}%";
     private IEnumerable<TodoTask> FilteredTasks => taskFilter switch
     {
@@ -709,7 +796,73 @@ else
         if (currentUser is null) return;
         profileForm.DisplayName = currentUser.DisplayName;
         profileForm.Email = currentUser.Email;
+        CancelAccountDeletion();
         showProfile = true;
+    }
+
+    private void OpenAccountDeletion()
+    {
+        accountDeletionError = null;
+        accountDeletionChoices.Clear();
+        deletionAcknowledged = false;
+        deletionPassword = string.Empty;
+        showDeleteAccount = true;
+    }
+
+    private void CancelAccountDeletion()
+    {
+        showDeleteAccount = false;
+        deletionAcknowledged = false;
+        deletionPassword = string.Empty;
+        accountDeletionError = null;
+    }
+
+    private void SetDeleteChoice(string listId, ChangeEventArgs args)
+    {
+        var choice = args.Value?.ToString() ?? string.Empty;
+        if (choice.Length == 0)
+        {
+            accountDeletionChoices.Remove(listId);
+        }
+        else
+        {
+            accountDeletionChoices[listId] = choice;
+        }
+        accountDeletionError = null;
+    }
+
+    private IEnumerable<string> GetTransferCandidates(TodoList list) =>
+        list.Members
+            .Where(member => !string.Equals(member, currentUser?.Email, StringComparison.OrdinalIgnoreCase))
+            .Where(member => list.MemberUids.TryGetValue(member, out var uid) && !string.IsNullOrWhiteSpace(uid))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+    private string GetDeleteChoice(string listId) =>
+        accountDeletionChoices.TryGetValue(listId, out var choice) ? choice : string.Empty;
+
+    private async Task DeleteAccount()
+    {
+        if (currentUser is null || !CanConfirmAccountDeletion || deletingAccount) return;
+        accountDeletionError = null;
+        deletingAccount = true;
+        try
+        {
+            await firebaseModule!.InvokeVoidAsync("deleteAccount", accountDeletionChoices, deletionPassword);
+            showProfile = false;
+        }
+        catch (JSException exception)
+        {
+            accountDeletionError = FriendlyError(exception.Message);
+        }
+        catch (InvalidOperationException exception)
+        {
+            accountDeletionError = $"The account couldn't be deleted. {exception.Message}";
+        }
+        finally
+        {
+            deletingAccount = false;
+            deletionPassword = string.Empty;
+        }
     }
 
     private async Task SaveProfile()
@@ -747,6 +900,7 @@ else
         if (message.Contains("auth/weak-password", StringComparison.OrdinalIgnoreCase)) return "Choose a stronger password with at least 8 characters.";
         if (message.Contains("auth/invalid-email", StringComparison.OrdinalIgnoreCase)) return "Enter a valid email address.";
         if (message.Contains("auth/too-many-requests", StringComparison.OrdinalIgnoreCase)) return "There have been too many attempts. Wait a little while and try again.";
+        if (message.Contains("auth/requires-recent-login", StringComparison.OrdinalIgnoreCase)) return "Firebase needs a fresh sign-in to delete this account. Sign out, sign in again, and retry.";
         if (message.Contains("auth/operation-not-allowed", StringComparison.OrdinalIgnoreCase)) return "Email/password sign-in is not enabled for this Firebase project. Enable it in Firebase Authentication settings.";
         if (message.Contains("permission", StringComparison.OrdinalIgnoreCase)) return "You don't have permission to make that change. Check that you're signed in with an email on this list.";
         if (message.Contains("popup-closed", StringComparison.OrdinalIgnoreCase)) return "Sign-in was cancelled before it finished.";
