@@ -521,7 +521,8 @@ function watchLists() {
     // Keep this filter aligned with the list read rule: Firestore rules don't filter results.
     const listsQuery = firebase.query(
         firebase.collection(database, "lists"),
-        firebase.where("members", "array-contains", currentUser.email.toLowerCase())
+        firebase.where("members", "array-contains", currentUser.email.toLowerCase()),
+        firebase.where("deletionInProgress", "==", false)
     );
     listsUnsubscribe = firebase.onSnapshot(listsQuery, snapshot => {
         const lists = snapshot.docs.map(item => ({ id: item.id, ...item.data() }))

@@ -113,6 +113,7 @@ service cloud.firestore {
       // Firestore rules are not filters; a query is allowed only when its constraints prove
       // that every returned document passes this rule.
       allow read: if signedIn()
+        && resource.data.get('deletionInProgress', false) == false
         && request.auth.token.email.lower() in resource.data.members;
 
       allow create: if signedIn()

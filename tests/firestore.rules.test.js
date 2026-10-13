@@ -63,6 +63,13 @@ test("member-filtered list query reads only lists containing the signed-in email
             deletionInProgress: false,
             deleted: false
         });
+        await setDoc(doc(database, "lists", "deleting-list"), {
+            title: "List being deleted",
+            ownerUid: "deleted-owner",
+            members: [owner.email],
+            deletionInProgress: true,
+            deleted: false
+        });
         await setDoc(doc(database, "lists", "member-list", "tasks", "visible-task"), {
             title: "Visible to the list member",
             listId: "member-list",
@@ -88,10 +95,12 @@ test("member-filtered list query reads only lists containing the signed-in email
 
     await assertSucceeds(getDoc(doc(database, "lists", "member-list")));
     await assertFails(getDoc(doc(database, "lists", "private-list")));
+    await assertFails(getDoc(doc(database, "lists", "deleting-list")));
 
     const memberQuery = query(
         collection(database, "lists"),
-        where("members", "array-contains", owner.email)
+        where("members", "array-contains", owner.email),
+        where("deletionInProgress", "==", false)
     );
     const snapshot = await assertSucceeds(getDocs(memberQuery));
 
@@ -101,6 +110,10 @@ test("member-filtered list query reads only lists containing the signed-in email
     );
 
     await assertFails(getDocs(collection(database, "lists")));
+    await assertFails(getDocs(query(
+        collection(database, "lists"),
+        where("members", "array-contains", owner.email)
+    )));
 
     // This is the exact unfiltered subcollection read used by watchTasks/onSnapshot.
     const taskCollection = collection(database, "lists", "member-list", "tasks");
@@ -149,7 +162,13 @@ test("a recreated account can read a stale deleting list but cannot read its tas
         })
         .firestore();
 
-    await assertSucceeds(getDoc(doc(recreatedAccount, "lists", "stale-deleting-list")));
+    await assertFails(getDoc(doc(recreatedAccount, "lists", "stale-deleting-list")));
+    const visibleLists = await assertSucceeds(getDocs(query(
+        collection(recreatedAccount, "lists"),
+        where("members", "array-contains", owner.email),
+        where("deletionInProgress", "==", false)
+    )));
+    assert.deepEqual(visibleLists.docs, []);
     await assertFails(getDocs(collection(recreatedAccount, "lists", "stale-deleting-list", "tasks")));
 });
 
