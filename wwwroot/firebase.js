@@ -9,6 +9,7 @@ let firebase;
 let currentUser;
 let listsUnsubscribe;
 let tasksUnsubscribe;
+let tasksListenerGeneration = 0;
 let activeComponent;
 let localData;
 
@@ -143,6 +144,7 @@ export async function enterDemo(displayName, email) {
 }
 
 export async function watchTasks(listId, component) {
+    const generation = ++tasksListenerGeneration;
     if (tasksUnsubscribe) {
         tasksUnsubscribe();
         tasksUnsubscribe = null;
@@ -162,13 +164,41 @@ export async function watchTasks(listId, component) {
         return;
     }
 
+    subscribeToTasks(listId, generation, true);
+}
+
+function subscribeToTasks(listId, generation, refreshOnDenied) {
     const taskCollection = firebase.collection(database, "lists", listId, "tasks");
-    // Tear down the previous listener above when switching lists to avoid stale task updates.
     tasksUnsubscribe = firebase.onSnapshot(taskCollection, snapshot => {
+        if (generation !== tasksListenerGeneration) return;
         const tasks = snapshot.docs.map(item => ({ id: item.id, listId, ...item.data() }))
             .sort((a, b) => Number(a.createdAt ?? 0) - Number(b.createdAt ?? 0));
         publishTasks(tasks);
-    }, error => reportError(error, "task updates"));
+    }, error => {
+        if (generation !== tasksListenerGeneration) return;
+        tasksUnsubscribe = null;
+        if (refreshOnDenied && error?.code === "permission-denied") {
+            refreshTaskListener(listId, generation).catch(refreshError => {
+                if (generation === tasksListenerGeneration) {
+                    reportError(refreshError, "task updates");
+                }
+            });
+            return;
+        }
+        reportError(error, "task updates");
+    });
+}
+
+async function refreshTaskListener(listId, generation) {
+    const user = currentUser;
+    if (!user || generation !== tasksListenerGeneration) return;
+
+    await user.reload();
+    await user.getIdToken(true);
+
+    if (generation !== tasksListenerGeneration || currentUser?.uid !== user.uid) return;
+
+    subscribeToTasks(listId, generation, false);
 }
 
 export async function createList(title) {
@@ -500,6 +530,7 @@ export function confirmAction(message) {
 }
 
 export function dispose() {
+    tasksListenerGeneration++;
     listsUnsubscribe?.();
     tasksUnsubscribe?.();
     listsUnsubscribe = null;
