@@ -297,7 +297,7 @@ else
                     {
                         <div class="member-row">
                             <span class="avatar avatar-user">@Initials(MemberLabel(member))</span>
-                            <span class="member-details"><strong>@MemberLabel(member)</strong><small>@member @(member.Equals(currentUser.Email, StringComparison.OrdinalIgnoreCase) ? " · You" : "")</small></span>
+                            <span class="member-details"><strong>@MemberLabel(member)</strong><small>@member</small></span>
                             @if (canManageList && !member.Equals(currentUser.Email, StringComparison.OrdinalIgnoreCase))
                             {
                                 <button class="remove-member-button" title="Remove @member from this list" aria-label="Remove @member from this list" @onclick="() => RemoveMember(member)">Remove</button>
@@ -742,11 +742,16 @@ else
     private void SetFilter(string filter) => taskFilter = filter;
     private static string ListIcon(TodoList list) => list.Title.Contains("shop", StringComparison.OrdinalIgnoreCase) || list.Title.Contains("grocer", StringComparison.OrdinalIgnoreCase) ? "🛒" : list.Title.Contains("home", StringComparison.OrdinalIgnoreCase) ? "⌂" : "✳";
 
-    private static string MemberLabel(string email)
+    private string MemberLabel(string email)
     {
         if (string.IsNullOrWhiteSpace(email)) return "Anyone";
-        var name = email.Split('@')[0].Replace('.', ' ').Replace('_', ' ');
-        return string.Join(' ', name.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
+        if (currentUser is not null && email.Equals(currentUser.Email, StringComparison.OrdinalIgnoreCase))
+        {
+            var displayName = string.IsNullOrWhiteSpace(currentUser.DisplayName) ? email : currentUser.DisplayName;
+            return $"{displayName} (you)";
+        }
+
+        return email;
     }
 
     private static string Initials(string value)
