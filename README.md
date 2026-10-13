@@ -82,7 +82,3 @@ Set all four Firebase variables or leave all four empty. If they're empty, the p
 dotnet build SharedTodoList.csproj
 dotnet publish SharedTodoList.csproj --configuration Release
 ```
-
-## Course presentation and project board
-
-The app's demo outline, accessibility check reminders, and suggested Trello cards are in [`docs/PROJECT-PRESENTATION.md`](docs/PROJECT-PRESENTATION.md). They are preparation notes, not a Trello board or a recorded presentation; the group still needs to create the board, divide the work, record the video, and submit the required links.
